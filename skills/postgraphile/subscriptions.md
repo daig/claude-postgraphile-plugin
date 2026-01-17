@@ -230,7 +230,21 @@ subscribePlan($parent, { $authorId }) {
 }
 ```
 
-## Payload Size Limit
+## Channel and Payload Limits
+
+### Channel Name Limit (63 characters)
+
+NOTIFY channel names are PostgreSQL identifiers, limited to 63 characters. Keep prefixes short and prefer numeric IDs over UUIDs for dynamic topics.
+
+```sql
+-- Risky with long prefixes + UUIDs
+PERFORM pg_notify('myapp:entity:updated:' || uuid, payload);  -- can exceed 63 chars
+
+-- Safe: short prefix + numeric ID
+PERFORM pg_notify('e:' || id::text, payload);
+```
+
+### Payload Size Limit (~8000 bytes)
 
 PostgreSQL `NOTIFY` payloads are limited to ~8000 bytes. For large data:
 
