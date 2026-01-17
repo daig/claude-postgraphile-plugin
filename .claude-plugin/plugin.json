@@ -1,0 +1,28 @@
+{
+  "name": "postgraphile",
+  "version": "1.0.0",
+  "description": "PostGraphile V5 patterns for generating GraphQL APIs from PostgreSQL. Covers schema translation, smart tags, behavior system, computed columns, custom mutations, RLS security, subscriptions via LISTEN/NOTIFY, and polymorphism (interfaces/unions).",
+  "author": {
+    "name": "Dai",
+    "url": "https://github.com/daig"
+  },
+  "repository": "https://github.com/daig/claude-postgraphile-plugin",
+  "license": "MIT",
+  "keywords": [
+    "postgraphile",
+    "graphql",
+    "postgresql",
+    "api",
+    "graphile",
+    "grafast",
+    "smart-tags",
+    "behavior",
+    "computed-columns",
+    "subscriptions",
+    "realtime",
+    "rls",
+    "polymorphism",
+    "interfaces",
+    "unions"
+  ]
+}
