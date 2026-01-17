@@ -162,6 +162,7 @@ See [security.md](security.md) for JWT integration and RLS patterns.
 | Ignoring V5 behavior defaults | Unexpected exposure | Set `schema.defaultBehavior` in config |
 | Missing `TagsFilePlugin` | Tags file not loaded | Add `TagsFilePlugin` to plugins array |
 | Missing primary keys for polymorphism | Interface/union errors | Ensure all polymorphic tables have PKs |
+| Custom function returns row, not edge | Relay `@appendEdge` won't work | Use CRUD mutations or `makeExtendSchemaPlugin` |
 
 ## Subscriptions Quick Reference
 

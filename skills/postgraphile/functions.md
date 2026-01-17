@@ -205,6 +205,64 @@ type RegisterUserPayload {
 }
 ```
 
+### Relay Edge Fields: A Key Limitation
+
+**Problem:** Custom PostgreSQL functions returning a row type only produce a payload with the node—no edge field. This breaks Relay's `@appendEdge` directive.
+
+Auto-generated CRUD mutations include edge fields:
+```graphql
+type CreateMessagePayload {
+  message: Message
+  messageEdge(orderBy: MessagesOrderBy): MessagesEdge  # Relay can use this
+  query: Query
+}
+```
+
+Custom function mutations do NOT:
+```graphql
+type SendMessagePayload {
+  message: Message  # No edge field - @appendEdge won't work
+  query: Query
+}
+```
+
+**Solutions:**
+
+1. **Use auto-generated mutations when possible** — They include edge fields automatically.
+
+2. **Return the junction/connection table row** — If adding to a connection (e.g., `message_channels`), return that row instead:
+   ```sql
+   -- Instead of returning messages, return the junction row
+   CREATE FUNCTION send_message_to_channel(channel_id int, content text)
+   RETURNS message_channels AS $$  -- Returns junction, not message
+     ...
+   $$ LANGUAGE plpgsql VOLATILE;
+   ```
+
+3. **Use `makeExtendSchemaPlugin` for proper payloads** — Build the edge field yourself in JavaScript:
+   ```js
+   // plugins/sendMessage.js
+   import { makeExtendSchemaPlugin, gql } from "postgraphile/utils";
+
+   export const SendMessagePlugin = makeExtendSchemaPlugin({
+     typeDefs: gql`
+       extend type Mutation {
+         sendMessage(channelId: ID!, content: String!): SendMessagePayload
+       }
+       type SendMessagePayload {
+         message: Message
+         messageEdge: MessagesEdge  # Now Relay can use @appendEdge
+         query: Query
+       }
+     `,
+     // ... plan resolvers to build the edge
+   });
+   ```
+
+4. **Accept manual cache updates** — Use Relay's imperative `updater` function instead of declarative `@appendEdge`.
+
+**Best practice:** If your mutation adds items to a list that clients need to display immediately, prefer auto-generated mutations or build proper edge fields with `makeExtendSchemaPlugin`.
+
 ### Returning Multiple Values
 
 Use `OUT` parameters or a custom type:
