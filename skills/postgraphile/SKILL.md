@@ -163,6 +163,7 @@ See [security.md](security.md) for JWT integration and RLS patterns.
 | Missing `TagsFilePlugin` | Tags file not loaded | Add `TagsFilePlugin` to plugins array |
 | Missing primary keys for polymorphism | Interface/union errors | Ensure all polymorphic tables have PKs |
 | Custom function returns row, not edge | Relay `@appendEdge` won't work | Use CRUD mutations or `makeExtendSchemaPlugin` |
+| Returning plain JS objects in plans | Null values, silent failures | Use `object()` and `constant()` from grafast |
 
 ## Subscriptions Quick Reference
 
@@ -180,6 +181,16 @@ $$ LANGUAGE plpgsql;
 CREATE TRIGGER post_changed AFTER INSERT OR UPDATE ON posts
   FOR EACH ROW EXECUTE FUNCTION notify_post_change();
 ```
+
+> **CRITICAL: Grafast Step Requirement**
+>
+> In subscription plugins, you cannot return plain JavaScript objects. Use `object()` and `constant()` from `postgraphile/grafast`:
+> ```js
+> // WRONG: return { node: $node, cursor: null };
+> // CORRECT:
+> import { object, constant } from "postgraphile/grafast";
+> return object({ node: $node, cursor: constant(null) });
+> ```
 
 See [subscriptions.md](subscriptions.md) for setup and custom subscriptions.
 

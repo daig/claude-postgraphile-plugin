@@ -143,6 +143,22 @@ When writing plugins with Grafast steps:
 | `applyPlan` | `apply` | Apply step modifications |
 | `inputPlan` | `baked` | Baked (pre-computed) input handling |
 
+> **CRITICAL: Everything Must Be a Step**
+>
+> In Grafast, you cannot mix plain JavaScript values with step objects. All values returned from plan resolvers must be steps:
+>
+> ```js
+> import { object, constant } from "postgraphile/grafast";
+>
+> // WRONG - plain JS object
+> return { node: $node, cursor: null };
+>
+> // CORRECT - use object() and constant()
+> return object({ node: $node, cursor: constant(null) });
+> ```
+>
+> Use `constant(value)` for static values, `object({...})` for composite objects, and `lambda($step, fn)` to transform step values.
+
 ```js
 // V5 Release Candidate pattern
 const MyFieldPlugin = {

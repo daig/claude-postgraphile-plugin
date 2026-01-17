@@ -97,13 +97,17 @@ CREATE TRIGGER post_change_trigger
 
 ### Step 2: Define Subscription Plugin (V5 Pattern)
 
-V5 uses Grafast's `listen()` step with `subscribePlan()` returning a streamable step and `plan()` transforming each event:
+V5 uses Grafast's `listen()` step with `subscribePlan()` returning a streamable step and `plan()` transforming each event.
+
+> **CRITICAL: Grafast requires all values to be "steps"**
+>
+> In Grafast, you cannot return plain JavaScript objects from plan resolvers. All values must be steps. Use `object()` for composite values and `constant()` for static values.
 
 ```js
 // plugins/subscriptions.js
 import { makeExtendSchemaPlugin, gql } from "postgraphile/utils";
-import { context, listen, lambda } from "postgraphile/grafast";
-import { jsonParse } from "postgraphile/@dataplan/json";
+import { context, listen, lambda, object, constant } from "postgraphile/grafast";
+import { jsonParse } from "@dataplan/json";
 
 export const PostSubscriptionsPlugin = makeExtendSchemaPlugin({
   typeDefs: gql`
@@ -125,13 +129,19 @@ export const PostSubscriptionsPlugin = makeExtendSchemaPlugin({
           // listen() returns a stream of raw payloads
           return listen($pgSubscriber, "postgraphile:post_change", jsonParse);
         },
-        // plan() transforms each event payload into the GraphQL response
+        // plan() passes the event to payload resolvers
         plan($event) {
-          return {
-            event: $event.get("event"),
-            postId: $event.get("id"),
-          };
+          return $event;
         },
+      },
+    },
+    // Resolve individual payload fields from the event step
+    PostChangePayload: {
+      event($event) {
+        return $event.get("event");
+      },
+      postId($event) {
+        return $event.get("id");
       },
     },
   },
@@ -144,7 +154,7 @@ For subscriptions to dynamic channels (e.g., per-entity):
 
 ```js
 import { context, listen, lambda } from "postgraphile/grafast";
-import { jsonParse } from "postgraphile/@dataplan/json";
+import { jsonParse } from "@dataplan/json";
 
 subscribePlan($parent, { $entityId }) {
   const $pgSubscriber = context().get("pgSubscriber");
@@ -177,8 +187,9 @@ export default {
 Allow clients to subscribe to specific events using Grafast's `filter()` step:
 
 ```js
+import { makeExtendSchemaPlugin, gql } from "postgraphile/utils";
 import { context, listen, filter, lambda } from "postgraphile/grafast";
-import { jsonParse } from "postgraphile/@dataplan/json";
+import { jsonParse } from "@dataplan/json";
 
 export const FilteredSubscriptionPlugin = makeExtendSchemaPlugin({
   typeDefs: gql`
@@ -202,11 +213,16 @@ export const FilteredSubscriptionPlugin = makeExtendSchemaPlugin({
           });
         },
         plan($event) {
-          return {
-            event: $event.get("event"),
-            postId: $event.get("id"),
-          };
+          return $event;
         },
+      },
+    },
+    PostChangePayload: {
+      event($event) {
+        return $event.get("event");
+      },
+      postId($event) {
+        return $event.get("id");
       },
     },
   },
@@ -352,7 +368,7 @@ For direct schema hook access instead of `makeExtendSchemaPlugin`:
 
 ```js
 import { listen, context } from "postgraphile/grafast";
-import { jsonParse } from "postgraphile/@dataplan/json";
+import { jsonParse } from "@dataplan/json";
 
 export const SubscriptionPlugin = {
   name: "SubscriptionPlugin",
@@ -441,7 +457,7 @@ $$ LANGUAGE plpgsql;
 ```js
 // Subscribe to specific conversation
 import { context, listen, lambda } from "postgraphile/grafast";
-import { jsonParse } from "postgraphile/@dataplan/json";
+import { jsonParse } from "@dataplan/json";
 
 subscribePlan($parent, { $conversationId }) {
   const $pgSubscriber = context().get("pgSubscriber");
@@ -462,6 +478,131 @@ BEGIN
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
+```
+
+## Relay Edge Integration
+
+When using Relay on the client, you'll want subscriptions to return edge types so you can use `@appendEdge` to automatically insert new items into connections.
+
+### Typed Subscription with Edge Return
+
+Instead of returning generic `Node` types, return specific edge types:
+
+```js
+import { makeExtendSchemaPlugin, gql } from "postgraphile/utils";
+import { context, listen, lambda, object, constant } from "postgraphile/grafast";
+import { jsonParse } from "@dataplan/json";
+
+export const MessageSubscriptionPlugin = makeExtendSchemaPlugin((build) => {
+  // Access the table resource from the registry
+  const { messages } = build.input.pgRegistry.pgResources;
+
+  return {
+    typeDefs: gql`
+      type MessageCreatedPayload {
+        messageEdge: MessagesEdge
+        channelId: UUID!
+      }
+
+      extend type Subscription {
+        messageCreated(channelId: UUID!): MessageCreatedPayload
+      }
+    `,
+    plans: {
+      Subscription: {
+        messageCreated: {
+          subscribePlan(_$root, { $channelId }) {
+            const $pgSubscriber = context().get("pgSubscriber");
+            const $topic = lambda($channelId, (id) => `postgraphile:channel:${id}`);
+            return listen($pgSubscriber, $topic, jsonParse);
+          },
+          plan($event) {
+            return $event;
+          },
+        },
+      },
+      MessageCreatedPayload: {
+        channelId($event) {
+          return $event.get("channelId");
+        },
+        messageEdge($event) {
+          const $messageId = $event.get("messageId");
+
+          // Fetch the actual record from the database
+          const $node = messages.get({ id: $messageId });
+
+          // CRITICAL: Use object() and constant() - cannot return plain JS objects!
+          return object({ node: $node, cursor: constant(null) });
+        },
+      },
+    },
+  };
+});
+```
+
+### Client-Side Usage with @appendEdge
+
+```graphql
+subscription MessageCreatedSubscription($channelId: UUID!, $connections: [ID!]!) {
+  messageCreated(channelId: $channelId) {
+    channelId
+    messageEdge @appendEdge(connections: $connections) {
+      cursor
+      node {
+        id
+        content
+        createdAt
+        author { id displayName }
+      }
+    }
+  }
+}
+```
+
+```typescript
+// React component with Relay
+const subscriptionConfig = useMemo(() => ({
+  subscription: MessageCreatedSubscription,
+  variables: {
+    channelId,
+    connections: connectionId ? [connectionId] : [],
+  },
+}), [channelId, connectionId]);
+
+useSubscription(subscriptionConfig);
+```
+
+### Common Mistakes with Edges
+
+| Mistake | Symptom | Fix |
+|---------|---------|-----|
+| Return plain `{ node, cursor }` | Edge is null, Relay warning | Use `object({ node: $node, cursor: constant(null) })` |
+| Use `@appendNode` with generic `Node` | "Expected target node to exist" error | Use typed edge with `@appendEdge` |
+| Forget to fetch from DB | Edge has null node | Use `table.get({ id: $id })` to fetch record |
+| Return wrong edge type | Type mismatch | Ensure edge type matches connection (e.g., `MessagesEdge` for `MessagesConnection`) |
+
+### Database Trigger for Edge Subscriptions
+
+Keep payloads minimal - only send IDs, fetch full records server-side:
+
+```sql
+CREATE FUNCTION notify_message_created() RETURNS trigger AS $$
+BEGIN
+  PERFORM pg_notify(
+    'postgraphile:channel:' || NEW.channel_id::text,
+    json_build_object(
+      'messageId', NEW.id,
+      'channelId', NEW.channel_id
+    )::text
+  );
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER message_created_notify
+  AFTER INSERT ON messages
+  FOR EACH ROW
+  EXECUTE FUNCTION notify_message_created();
 ```
 
 ## Debugging
